@@ -15,7 +15,7 @@
 
 	Other SERVER scripts can control it:
 	  local cmd = ReplicatedStorage.BTSettings.EnvironmentCycle:WaitForChild("Command")
-	  cmd:Invoke("set", "Night", 30)  -- Night for 30 units (Settings.timeUnit)
+	  cmd:Invoke("set", "Night", 30)  -- Night for 30 minutes
 	  cmd:Invoke("next")              -- jump to the next one
 	  cmd:Invoke("auto")              -- back to the timer
 	  print(cmd:Invoke("status"))
@@ -47,12 +47,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────
 -- Schedule (checked once; bad lines are skipped with a warning)
 -- ─────────────────────────────────────────────────────────────────────────
-local UNITS = { seconds = 1, minutes = 60, hours = 3600 }
-local unit = UNITS[Settings.timeUnit]
-if not unit then
-	warn(TAG, "timeUnit must be 'seconds', 'minutes' or 'hours' — using minutes")
-	unit = 60
-end
+local DAY = 86400
 
 local function findPresetFolder(name: string): Instance?
 	local exact = lightingFolder:FindFirstChild(name)
@@ -68,159 +63,191 @@ local function findPresetFolder(name: string): Instance?
 	return nil
 end
 
+-- "06:00" → seconds after midnight
+local function parseClock(text: any, where: string): number?
+	local h, m
+	if type(text) == "string" then
+		h, m = string.match(text, "^%s*(%d%d?):(%d%d)%s*$")
+	end
+	h, m = tonumber(h), tonumber(m)
+	if not h or not m or h > 23 or m > 59 then
+		warn(TAG, where .. ': time must look like "06:00" (24-hour) — skipped')
+		return nil
+	end
+	return h * 3600 + m * 60
+end
+
+local offset = (tonumber(Settings.utcOffsetHours) or 0) * 3600
+
+local blockSeconds = tonumber(Settings.blockHours)
+if not blockSeconds or blockSeconds ~= blockSeconds or blockSeconds <= 0 then
+	warn(TAG, "blockHours must be a number above 0 — using 2")
+	blockSeconds = 2
+end
+blockSeconds = math.max(blockSeconds * 3600, 10)
+
 type Entry = { index: number, preset: string, seconds: number }
 
-local entries: { Entry } = {}
-for i, line in ipairs(Settings.schedule or {}) do
-	local where = ("schedule line %d"):format(i)
-	if type(line) ~= "table" or type(line.preset) ~= "string" then
-		warn(TAG, where .. ": 'preset' must be a folder name from All Lighting")
-	elseif not findPresetFolder(line.preset) then
-		warn(TAG, where .. ": preset '" .. line.preset .. "' is not a folder in All Lighting — skipped")
-	elseif type(line.duration) ~= "number" or line.duration ~= line.duration or line.duration <= 0 then
-		warn(TAG, where .. " (" .. line.preset .. "): 'duration' must be a number above 0 — skipped")
+local loop: { Entry } = {}
+for i, line in ipairs(Settings.loop or {}) do
+	local where = ("loop line %d"):format(i)
+	local folder = type(line) == "table" and type(line.preset) == "string" and findPresetFolder(line.preset)
+	if not folder then
+		warn(TAG, where .. ": preset '" .. tostring(type(line) == "table" and line.preset) .. "' is not a folder in All Lighting — skipped")
 	else
-		table.insert(entries, {
-			index = i,
-			preset = (findPresetFolder(line.preset) :: Instance).Name,
-			seconds = line.duration * unit,
-		})
+		table.insert(loop, { index = i, preset = folder.Name, seconds = blockSeconds })
 	end
 end
 
-if #entries == 0 then
-	warn(TAG, "the schedule has no valid lines — live environment is off")
+if #loop == 0 then
+	warn(TAG, "Settings.loop has no valid presets — live environment is off")
 	return
 end
 
-local total = 0
-for _, e in entries do
-	total += e.seconds
+local function loopPosOf(preset: string): number?
+	for k, e in loop do
+		if e.preset == preset then
+			return k
+		end
+	end
+	return nil
+end
+
+type Fixed = { at: number, preset: string, loopPos: number? }
+
+local fixed: { Fixed } = {}
+for i, line in ipairs(Settings.fixedTimes or {}) do
+	local where = ("fixedTimes line %d"):format(i)
+	local folder = type(line) == "table" and type(line.preset) == "string" and findPresetFolder(line.preset)
+	local at = type(line) == "table" and parseClock(line.at, where)
+	if not folder then
+		warn(TAG, where .. ": preset is not a folder in All Lighting — skipped")
+	elseif at then
+		local duplicate = false
+		for _, f in fixed do
+			duplicate = duplicate or f.at == at
+		end
+		if duplicate then
+			warn(TAG, where .. ": another line already uses " .. tostring(line.at) .. " — skipped")
+		else
+			table.insert(fixed, { at = at, preset = folder.Name, loopPos = loopPosOf(folder.Name) })
+		end
+	end
+end
+table.sort(fixed, function(a, b)
+	return a.at < b.at
+end)
+if #fixed == 0 then
+	fixed = { { at = 0, preset = loop[1].preset, loopPos = 1 } }
+end
+
+-- preset → hours it may start in
+local windows: { [string]: { from: number, to: number } } = {}
+for name, w in pairs(Settings.onlyBetween or {}) do
+	local where = "onlyBetween." .. tostring(name)
+	local folder = type(name) == "string" and findPresetFolder(name)
+	if not folder then
+		warn(TAG, where .. ": not a folder in All Lighting — skipped")
+	elseif type(w) ~= "table" then
+		warn(TAG, where .. ': must look like { from = "19:00", to = "05:00" } — skipped')
+	else
+		local from, to = parseClock(w.from, where .. ".from"), parseClock(w.to, where .. ".to")
+		if from and to then
+			windows[folder.Name] = { from = from, to = to }
+		end
+	end
+end
+
+local function allowedAt(preset: string, localTime: number): boolean
+	local w = windows[preset]
+	if not w or w.from == w.to then
+		return true
+	end
+	local s = localTime % DAY
+	if w.from < w.to then
+		return s >= w.from and s < w.to
+	end
+	return s >= w.from or s < w.to -- across midnight
+end
+
+-- the loop position that plays after `pos`, for a block starting at localTime
+local function nextLoopPos(pos: number, localTime: number): number
+	for step = 1, #loop do
+		local p = (pos + step - 1) % #loop + 1
+		if allowedAt(loop[p].preset, localTime) then
+			return p
+		end
+	end
+	return pos % #loop + 1 -- every preset is blocked at this hour: just take the next
 end
 
 local function now(): number
 	return DateTime.now().UnixTimestampMillis / 1000
 end
 
--- Order of `entries` for one round (shuffle is seeded by the round number,
--- so every server computes the very same order).
-local function shuffled(round: number): { number }
-	local order = table.create(#entries)
-	for i = 1, #entries do
-		order[i] = i
-	end
-	if Settings.order == "shuffle" and #order > 1 then
-		local rng = Random.new(round * 7919 + 17)
-		for i = #order, 2, -1 do
-			local j = rng:NextInteger(1, i)
-			order[i], order[j] = order[j], order[i]
-		end
-	end
-	return order
-end
-
-local orderCache: { [number]: { number } } = {}
-local function orderFor(round: number): { number }
-	local cached = orderCache[round]
-	if cached then
-		return cached
-	end
-	local order = shuffled(round)
-	if Settings.order == "shuffle" and #order >= 3 then
-		-- never the same preset twice in a row across the round edge
-		local prev = shuffled(round - 1)
-		if order[1] == prev[#prev] then
-			order[1], order[2] = order[2], order[1]
-		end
-	end
-	orderCache[round] = order
-	orderCache[round - 3] = nil
-	return order
+local function entryFor(presetName: string, seconds: number?): Entry
+	local pos = loopPosOf(presetName)
+	return {
+		index = pos and loop[pos].index or 0,
+		preset = presetName,
+		seconds = seconds or blockSeconds,
+	}
 end
 
 type Phase = { entry: Entry, startedAt: number, endsAt: number, nextEntry: Entry }
 
--- ── synced: same answer on every server, from the real clock ──
-local anchor = 0
-do
-	local cs = Settings.cycleStart or {}
-	anchor = (cs.hour or 0) * 3600 + (cs.minute or 0) * 60 - (cs.utcOffsetHours or 0) * 3600
-end
-
-local function syncedPhase(t: number): Phase
-	local elapsed = t - anchor
-	local round = math.floor(elapsed / total)
-	local pos = elapsed - round * total
-	local order = orderFor(round)
-	local acc = 0
-	for k, ei in order do
-		local e = entries[ei]
-		if pos < acc + e.seconds or k == #order then
-			local startedAt = anchor + round * total + acc
-			local nextEi = order[k + 1] or orderFor(round + 1)[1]
-			return { entry = e, startedAt = startedAt, endsAt = startedAt + e.seconds, nextEntry = entries[nextEi] }
-		end
-		acc += e.seconds
-	end
-	error("unreachable")
-end
-
--- ── local: this server runs its own cycle ──
-local localState: { round: number, k: number, startedAt: number, endsAt: number }? = nil
-
-local function localStart(t: number)
-	local order = orderFor(0)
-	local k = 1
-	local sw = Settings.startWith
-	if sw == "random" then
-		k = Random.new():NextInteger(1, #order)
-	elseif type(sw) == "number" then
-		for i, ei in order do
-			if entries[ei].index == sw then
-				k = i
-				break
-			end
-		end
-	elseif type(sw) == "string" then
-		for i, ei in order do
-			if string.lower(entries[ei].preset) == string.lower(sw) then
-				k = i
-				break
-			end
-		end
-	end
-	localState = { round = 0, k = k, startedAt = t, endsAt = t + entries[order[k]].seconds }
-end
-
-local function localAdvance(startAt: number)
-	local s = localState :: any
-	s.k += 1
-	if s.k > #orderFor(s.round) then
-		s.round += 1
-		s.k = 1
-	end
-	s.startedAt = startAt
-	s.endsAt = startAt + entries[orderFor(s.round)[s.k]].seconds
-end
-
-local function localPhase(t: number): Phase
-	if not localState then
-		localStart(t)
-	end
-	local s = localState :: any
-	while t >= s.endsAt do
-		localAdvance(s.endsAt)
-	end
-	local order = orderFor(s.round)
-	local nextEi = order[s.k + 1] or orderFor(s.round + 1)[1]
-	return { entry = entries[order[s.k]], startedAt = s.startedAt, endsAt = s.endsAt, nextEntry = entries[nextEi] }
-end
-
+-- What plays at Unix time t. Pure clock math, so every server gets the same.
 local function schedulePhase(t: number): Phase
-	if Settings.syncAllServers then
-		return syncedPhase(t)
+	local lt = t + offset
+	local dayStart = math.floor(lt / DAY) * DAY
+
+	-- the last fixed time at or before now (maybe yesterday's)
+	local fi = 0
+	for i = #fixed, 1, -1 do
+		if dayStart + fixed[i].at <= lt then
+			fi = i
+			break
+		end
 	end
-	return localPhase(t)
+	local anchorT
+	if fi == 0 then
+		fi = #fixed
+		anchorT = dayStart - DAY + fixed[fi].at
+	else
+		anchorT = dayStart + fixed[fi].at
+	end
+	local anchor = fixed[fi]
+	local nextFixed = fixed[fi + 1] or fixed[1]
+	local nextFixedT = fixed[fi + 1] and dayStart + nextFixed.at or dayStart + DAY + nextFixed.at
+	if fi == #fixed and anchorT < dayStart then
+		nextFixedT = dayStart + fixed[1].at
+	end
+
+	-- walk the loop from the fixed time to now
+	local pos = anchor.loopPos or 0
+	local preset = anchor.preset
+	local startedAt = anchorT
+	local endsAt = math.min(anchorT + blockSeconds, nextFixedT)
+	while lt >= endsAt do
+		pos = nextLoopPos(pos, endsAt)
+		preset = loop[pos].preset
+		startedAt = endsAt
+		endsAt = math.min(endsAt + blockSeconds, nextFixedT)
+	end
+
+	local nextPreset
+	if endsAt >= nextFixedT then
+		nextPreset = nextFixed.preset
+	else
+		nextPreset = loop[nextLoopPos(pos, endsAt)].preset
+	end
+
+	return {
+		entry = entryFor(preset, endsAt - startedAt),
+		startedAt = startedAt - offset,
+		endsAt = endsAt - offset,
+		nextEntry = entryFor(nextPreset),
+	}
 end
 
 -- ── admin override (this server only) ──
@@ -286,16 +313,6 @@ local function presetNames(): { string }
 	return names
 end
 
-local function entryFor(presetName: string, seconds: number?): Entry
-	for _, e in entries do
-		if e.preset == presetName then
-			return { index = e.index, preset = e.preset, seconds = seconds or e.seconds }
-		end
-	end
-	-- a preset folder that is not in the schedule
-	return { index = 0, preset = presetName, seconds = seconds or 30 * 60 }
-end
-
 local function runCommand(action: string?, arg: string?, amount: number?): string
 	local t = now()
 	action = string.lower(action or "status")
@@ -316,12 +333,7 @@ local function runCommand(action: string?, arg: string?, amount: number?): strin
 		return "Back to the timer · " .. runCommand("status")
 	elseif action == "next" then
 		local phase = currentPhase(t)
-		if not Settings.syncAllServers and not forced then
-			localAdvance(t)
-			publish()
-			return runCommand("status")
-		end
-		local nxt = phase.nextEntry
+		local nxt = entryFor(phase.nextEntry.preset)
 		forced = { entry = nxt, startedAt = t, endsAt = t + nxt.seconds, nextEntry = schedulePhase(t + nxt.seconds).entry }
 		publish()
 		return runCommand("status")
@@ -332,7 +344,7 @@ local function runCommand(action: string?, arg: string?, amount: number?): strin
 		end
 		local seconds = nil
 		if type(amount) == "number" and amount == amount and amount > 0 then
-			seconds = math.min(amount * unit, 7 * 86400)
+			seconds = math.min(amount * 60, 7 * 86400)
 		end
 		local e = entryFor(folder.Name, seconds)
 		forced = { entry = e, startedAt = t, endsAt = t + e.seconds, nextEntry = schedulePhase(t + e.seconds).entry }

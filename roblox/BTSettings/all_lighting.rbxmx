@@ -44,6 +44,8 @@
 	  StarterPlayerScripts> BTSettings > UI                (draws the panel, sends signals)
 	  StarterPlayerScripts> BTSettings > Features          (graphics, skybox, camera,
 	                                                        audio, name tags, lag tip)
+	  ReplicatedStorage   > BTSettings > EnvironmentCycle  (live sky / day-night timer
+	                                                        for everyone → its Settings)
 	══════════════════════════════════════════════════════════════════════════
 ]]
 
@@ -603,6 +605,19 @@ Config.tabs = {
 				},
 				notify = "%s graphics enabled",
 				action = { kind = "bindable", name = P .. "GraphicsPreset" },
+			},
+
+			-- Live environment (BTSettings > EnvironmentCycle). OFF = this player
+			-- keeps their own sky; the server's timer no longer changes it.
+			{ type = "section", title = "Environment" },
+			{
+				type = "toggle",
+				id = "env_live",
+				title = "Live environment",
+				desc = "Sunrise, day, sunset and night change for everyone over time. Turn off to keep your own sky.",
+				descBn = "সময়ের সাথে সবার জন্য সকাল, দিন, সন্ধ্যা, রাত বদলায়। নিজের আকাশ রাখতে বন্ধ করুন।",
+				default = true,
+				action = { kind = "bindable", name = P .. "EnvLive" },
 			},
 
 			{ type = "section", title = "Lighting" },
@@ -5897,7 +5912,7 @@ return Twilight]]></ProtectedString>
 				</Item>
 			</Item>
 		</Item>
-		<Item class="Folder" referent="RBX2392A49D3880427FA7AD669BBE707F44">
+		<Item class="Folder" referent="RBX47CD12DB615A420D8D9FB4D2EC5D18CD">
 			<Properties>
 				<Color3 name="IconTint">
 					<R>0</R>
@@ -5912,7 +5927,7 @@ return Twilight]]></ProtectedString>
 				<int64 name="SourceAssetId">-1</int64>
 				<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 			</Properties>
-			<Item class="ModuleScript" referent="RBX9AC46B6D88704593BBBE71DE3CD5C99F">
+			<Item class="ModuleScript" referent="RBX0ACEE5701C1743A096AA35AB220E1192">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--!nonstrict
@@ -5943,61 +5958,62 @@ local Settings = {}
 Settings.enabled = true
 
 -- ═══════════════════════════════════════════════════════════════════════
--- SCHEDULE — which presets play, in which order, and for how long
--- ═══════════════════════════════════════════════════════════════════════
--- Unit for every `duration` below: "seconds", "minutes" or "hours".
--- (Testing tip: set "seconds" and small numbers like 20, see it change fast.)
-Settings.timeUnit = "minutes"
-
--- One line = one environment. They play top to bottom, then start again.
---   preset         REQUIRED · exact folder name inside "All Lighting"
---   duration       REQUIRED · how long it stays (in Settings.timeUnit)
---   title          optional · name shown in the notice (default = preset name)
---   icon           optional · emoji in the notice
---   color          optional · notice accent color, e.g. Color3.fromRGB(255, 170, 60)
---   message        optional · small line under the title in the notice
---   clockTime      optional · force the sun position (0-24) for this preset,
---                  e.g. 0 = midnight moon. Without it the preset's own
---                  "Lighting Valus > ClockTime" is used.
---   transitionTime optional · blend seconds just for this preset
+-- SCHEDULE — real clock + a 2-hour loop
 --
--- Use only the presets you want. The same preset may appear more than once.
--- Your preset folders: Sunrise, MorningGoldenHour, Day, AfternoonGoldenHour,
--- Sunset, Twilight, Night, Tower Main Light, Pink SKy, Golden Sky,
--- Cloudy sky, Breakup Sky
-Settings.schedule = {
-	{ preset = "Sunrise", duration = 60, title = "Sunrise", icon = "🌅", color = Color3.fromRGB(255, 170, 90) },
-	{ preset = "Day", duration = 120, title = "Day", icon = "☀️", color = Color3.fromRGB(255, 220, 110) },
-	{ preset = "AfternoonGoldenHour", duration = 60, title = "Afternoon", icon = "🌤️", color = Color3.fromRGB(255, 196, 80) },
-	{ preset = "Sunset", duration = 60, title = "Sunset", icon = "🌇", color = Color3.fromRGB(255, 130, 70) },
-	{ preset = "Night", duration = 120, title = "Night", icon = "🌙", color = Color3.fromRGB(130, 150, 255) },
+-- How a day is built (every server computes the same, so every server of
+-- the game shows the same environment at the same moment):
+--   1. At each fixedTimes clock time, that preset starts — always.
+--   2. After it, the loop goes on: every blockHours the next preset in `loop`.
+--   3. A preset listed in onlyBetween is skipped outside its hours
+--      (so Night never shows in the daytime).
+--   4. When the next fixed time arrives, the running preset ends early.
+--
+-- With the values below, Bangladesh time:
+--   06-08 Sunrise · 08-10 Day · 10-12 Afternoon · 12-14 Sunset
+--   14-16 Day · 16-18 Afternoon · 18-20 Sunset · 20-22 Night
+--   22-00 Day · 00-02 Afternoon · 02-04 Sunset · 04-06 Night · 06 Sunrise…
+-- ═══════════════════════════════════════════════════════════════════════
 
-	-- More examples (remove the "--" to use them):
-	-- { preset = "Twilight", duration = 30, title = "Twilight", icon = "🌆", color = Color3.fromRGB(90, 130, 220) },
-	-- { preset = "Pink SKy", duration = 60, title = "Pink Sky", icon = "🌸", color = Color3.fromRGB(240, 140, 230) },
-	-- { preset = "Golden Sky", duration = 60, title = "Golden Sky", icon = "✨" },
+-- Your time zone (hours from UTC). Bangladesh = 6. All clock times below
+-- are in this time zone, wherever the Roblox server is.
+Settings.utcOffsetHours = 6
+
+-- How long each preset of the loop stays, in hours (0.5 = 30 minutes).
+-- Testing tip: 0.01 ≈ 36 seconds, so you can watch the loop change fast.
+Settings.blockHours = 2
+
+-- The presets that take turns, in this order. One line = one preset.
+--   preset          REQUIRED · exact folder name inside "All Lighting"
+--   title           optional · name shown in the notice (default = preset name)
+--   icon            optional · emoji in the notice
+--   color           optional · notice accent color
+--   message         optional · small line under the title in the notice
+--   clockTime       optional · force the sun position (0-24), e.g. 0 for Night.
+--                   Without it the preset's "Lighting Valus > ClockTime" is used.
+--   transitionTime  optional · blend seconds just for this preset
+Settings.loop = {
+	{ preset = "Sunrise", title = "Sunrise", icon = "🌅", color = Color3.fromRGB(255, 170, 90) },
+	{ preset = "Day", title = "Day", icon = "☀️", color = Color3.fromRGB(255, 220, 110) },
+	{ preset = "AfternoonGoldenHour", title = "Afternoon", icon = "🌤️", color = Color3.fromRGB(255, 196, 80) },
+	{ preset = "Sunset", title = "Sunset", icon = "🌇", color = Color3.fromRGB(255, 130, 70) },
+	{ preset = "Night", title = "Night", icon = "🌙", color = Color3.fromRGB(130, 150, 255) },
 }
 
--- "loop"    = play the list top to bottom, again and again.
--- "shuffle" = mix the order every round (every server still shows the same one
---             when syncAllServers = true).
-Settings.order = "loop"
+-- Real clock times ("HH:MM", 24-hour) when a preset ALWAYS starts.
+-- The loop continues from that preset afterwards.
+-- (No lines here = the loop restarts from its first preset at 00:00.)
+Settings.fixedTimes = {
+	{ at = "06:00", preset = "Sunrise" }, -- morning: Sunrise
+	{ at = "20:00", preset = "Night" }, -- evening: Night for sure
+}
 
--- true  = EVERY server of the game shows the same environment at the same
---         moment (based on the real clock). A player who switches servers
---         sees the same sky. Recommended.
--- false = each server starts its own cycle when it opens (see startWith).
-Settings.syncAllServers = true
-
--- syncAllServers = true only: the real clock time when the FIRST line of the
--- schedule starts. utcOffsetHours = your time zone (Bangladesh = 6).
--- Tip: make the durations add up to 24 hours and the presets follow the real
--- day — e.g. Sunrise at 6:00 in Bangladesh: hour = 6, minute = 0.
-Settings.cycleStart = { hour = 6, minute = 0, utcOffsetHours = 6 }
-
--- syncAllServers = false only: where a new server starts.
--- 1 = first line · "random" = any line · "Night" = the first line with that preset.
-Settings.startWith = 1
+-- A preset may only START inside these hours; outside them the loop skips it.
+-- "from" later than "to" means across midnight (19:00 → 05:00 = the night).
+-- Presets not listed here can come at any time.
+Settings.onlyBetween = {
+	Night = { from = "19:00", to = "05:00" }, -- Night only at night
+	Sunrise = { from = "05:00", to = "09:00" }, -- Sunrise only early morning
+}
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- TRANSITION — how the change looks
@@ -6041,9 +6057,14 @@ Settings.notice = {
 -- PLAYERS — personal choice
 -- ═══════════════════════════════════════════════════════════════════════
 Settings.player = {
+	-- The "Live environment" toggle in Settings › Graphics (in Config).
+	-- OFF = this player keeps their own sky; the timer no longer changes it.
+	-- ON  = they follow the server again right away. (Not saved: every
+	-- player starts with it ON.)
 	-- A player can still pick any sky in the Skybox tab at any time; it stays
-	-- until the next environment change. (This system only READS the
-	-- BTSettings Config and panel values — it never changes them.)
+	-- until the next environment change.
+	controlId = "env_live",
+	eventName = "BTSettingsEnvLive", -- = Config action name (PREFIX .. "EnvLive")
 	-- true = the "Low" quality preset still turns post effects off and thins
 	-- the fog after an environment change (uses Config.graphics.presets).
 	respectQualityPreset = true,
@@ -6068,8 +6089,8 @@ Settings.applyClouds = true
 -- Chat commands (only for the people below):
 --   /env                 → what is on now and what comes next
 --   /env list            → all preset names
---   /env Night           → switch THIS server to Night now (for its normal duration)
---   /env Night 30        → Night for 30 minutes (Settings.timeUnit), then back to the timer
+--   /env Night           → switch THIS server to Night now (for blockHours)
+--   /env Night 30        → Night for 30 minutes, then back to the timer
 --   /env next            → jump to the next one
 --   /env auto            → cancel your change, back to the timer
 -- A change made with a command affects only the server you are in.
@@ -6085,7 +6106,7 @@ Settings.admin = {
 
 return Settings
 ]]></ProtectedString>
-					<string name="ScriptGuid">{2CD6D544-9D77-43FE-9B5B-E43A56FDA417}</string>
+					<string name="ScriptGuid">{E6DAFBBF-A741-47B6-A4AC-3F51A931B8DE}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
@@ -6095,7 +6116,7 @@ return Settings
 					<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 				</Properties>
 			</Item>
-			<Item class="Script" referent="RBX37DEEC8CCDCF451080F1A073B8D9D491">
+			<Item class="Script" referent="RBXDAE360F183AA409782771CADE1CE5D52">
 				<Properties>
 					<ProtectedString name="Source"><![CDATA[--!nonstrict
 --[[
@@ -6114,7 +6135,7 @@ return Settings
 
 	Other SERVER scripts can control it:
 	  local cmd = ReplicatedStorage.BTSettings.EnvironmentCycle:WaitForChild("Command")
-	  cmd:Invoke("set", "Night", 30)  -- Night for 30 units (Settings.timeUnit)
+	  cmd:Invoke("set", "Night", 30)  -- Night for 30 minutes
 	  cmd:Invoke("next")              -- jump to the next one
 	  cmd:Invoke("auto")              -- back to the timer
 	  print(cmd:Invoke("status"))
@@ -6146,12 +6167,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────
 -- Schedule (checked once; bad lines are skipped with a warning)
 -- ─────────────────────────────────────────────────────────────────────────
-local UNITS = { seconds = 1, minutes = 60, hours = 3600 }
-local unit = UNITS[Settings.timeUnit]
-if not unit then
-	warn(TAG, "timeUnit must be 'seconds', 'minutes' or 'hours' — using minutes")
-	unit = 60
-end
+local DAY = 86400
 
 local function findPresetFolder(name: string): Instance?
 	local exact = lightingFolder:FindFirstChild(name)
@@ -6167,159 +6183,191 @@ local function findPresetFolder(name: string): Instance?
 	return nil
 end
 
+-- "06:00" → seconds after midnight
+local function parseClock(text: any, where: string): number?
+	local h, m
+	if type(text) == "string" then
+		h, m = string.match(text, "^%s*(%d%d?):(%d%d)%s*$")
+	end
+	h, m = tonumber(h), tonumber(m)
+	if not h or not m or h > 23 or m > 59 then
+		warn(TAG, where .. ': time must look like "06:00" (24-hour) — skipped')
+		return nil
+	end
+	return h * 3600 + m * 60
+end
+
+local offset = (tonumber(Settings.utcOffsetHours) or 0) * 3600
+
+local blockSeconds = tonumber(Settings.blockHours)
+if not blockSeconds or blockSeconds ~= blockSeconds or blockSeconds <= 0 then
+	warn(TAG, "blockHours must be a number above 0 — using 2")
+	blockSeconds = 2
+end
+blockSeconds = math.max(blockSeconds * 3600, 10)
+
 type Entry = { index: number, preset: string, seconds: number }
 
-local entries: { Entry } = {}
-for i, line in ipairs(Settings.schedule or {}) do
-	local where = ("schedule line %d"):format(i)
-	if type(line) ~= "table" or type(line.preset) ~= "string" then
-		warn(TAG, where .. ": 'preset' must be a folder name from All Lighting")
-	elseif not findPresetFolder(line.preset) then
-		warn(TAG, where .. ": preset '" .. line.preset .. "' is not a folder in All Lighting — skipped")
-	elseif type(line.duration) ~= "number" or line.duration ~= line.duration or line.duration <= 0 then
-		warn(TAG, where .. " (" .. line.preset .. "): 'duration' must be a number above 0 — skipped")
+local loop: { Entry } = {}
+for i, line in ipairs(Settings.loop or {}) do
+	local where = ("loop line %d"):format(i)
+	local folder = type(line) == "table" and type(line.preset) == "string" and findPresetFolder(line.preset)
+	if not folder then
+		warn(TAG, where .. ": preset '" .. tostring(type(line) == "table" and line.preset) .. "' is not a folder in All Lighting — skipped")
 	else
-		table.insert(entries, {
-			index = i,
-			preset = (findPresetFolder(line.preset) :: Instance).Name,
-			seconds = line.duration * unit,
-		})
+		table.insert(loop, { index = i, preset = folder.Name, seconds = blockSeconds })
 	end
 end
 
-if #entries == 0 then
-	warn(TAG, "the schedule has no valid lines — live environment is off")
+if #loop == 0 then
+	warn(TAG, "Settings.loop has no valid presets — live environment is off")
 	return
 end
 
-local total = 0
-for _, e in entries do
-	total += e.seconds
+local function loopPosOf(preset: string): number?
+	for k, e in loop do
+		if e.preset == preset then
+			return k
+		end
+	end
+	return nil
+end
+
+type Fixed = { at: number, preset: string, loopPos: number? }
+
+local fixed: { Fixed } = {}
+for i, line in ipairs(Settings.fixedTimes or {}) do
+	local where = ("fixedTimes line %d"):format(i)
+	local folder = type(line) == "table" and type(line.preset) == "string" and findPresetFolder(line.preset)
+	local at = type(line) == "table" and parseClock(line.at, where)
+	if not folder then
+		warn(TAG, where .. ": preset is not a folder in All Lighting — skipped")
+	elseif at then
+		local duplicate = false
+		for _, f in fixed do
+			duplicate = duplicate or f.at == at
+		end
+		if duplicate then
+			warn(TAG, where .. ": another line already uses " .. tostring(line.at) .. " — skipped")
+		else
+			table.insert(fixed, { at = at, preset = folder.Name, loopPos = loopPosOf(folder.Name) })
+		end
+	end
+end
+table.sort(fixed, function(a, b)
+	return a.at < b.at
+end)
+if #fixed == 0 then
+	fixed = { { at = 0, preset = loop[1].preset, loopPos = 1 } }
+end
+
+-- preset → hours it may start in
+local windows: { [string]: { from: number, to: number } } = {}
+for name, w in pairs(Settings.onlyBetween or {}) do
+	local where = "onlyBetween." .. tostring(name)
+	local folder = type(name) == "string" and findPresetFolder(name)
+	if not folder then
+		warn(TAG, where .. ": not a folder in All Lighting — skipped")
+	elseif type(w) ~= "table" then
+		warn(TAG, where .. ': must look like { from = "19:00", to = "05:00" } — skipped')
+	else
+		local from, to = parseClock(w.from, where .. ".from"), parseClock(w.to, where .. ".to")
+		if from and to then
+			windows[folder.Name] = { from = from, to = to }
+		end
+	end
+end
+
+local function allowedAt(preset: string, localTime: number): boolean
+	local w = windows[preset]
+	if not w or w.from == w.to then
+		return true
+	end
+	local s = localTime % DAY
+	if w.from < w.to then
+		return s >= w.from and s < w.to
+	end
+	return s >= w.from or s < w.to -- across midnight
+end
+
+-- the loop position that plays after `pos`, for a block starting at localTime
+local function nextLoopPos(pos: number, localTime: number): number
+	for step = 1, #loop do
+		local p = (pos + step - 1) % #loop + 1
+		if allowedAt(loop[p].preset, localTime) then
+			return p
+		end
+	end
+	return pos % #loop + 1 -- every preset is blocked at this hour: just take the next
 end
 
 local function now(): number
 	return DateTime.now().UnixTimestampMillis / 1000
 end
 
--- Order of `entries` for one round (shuffle is seeded by the round number,
--- so every server computes the very same order).
-local function shuffled(round: number): { number }
-	local order = table.create(#entries)
-	for i = 1, #entries do
-		order[i] = i
-	end
-	if Settings.order == "shuffle" and #order > 1 then
-		local rng = Random.new(round * 7919 + 17)
-		for i = #order, 2, -1 do
-			local j = rng:NextInteger(1, i)
-			order[i], order[j] = order[j], order[i]
-		end
-	end
-	return order
-end
-
-local orderCache: { [number]: { number } } = {}
-local function orderFor(round: number): { number }
-	local cached = orderCache[round]
-	if cached then
-		return cached
-	end
-	local order = shuffled(round)
-	if Settings.order == "shuffle" and #order >= 3 then
-		-- never the same preset twice in a row across the round edge
-		local prev = shuffled(round - 1)
-		if order[1] == prev[#prev] then
-			order[1], order[2] = order[2], order[1]
-		end
-	end
-	orderCache[round] = order
-	orderCache[round - 3] = nil
-	return order
+local function entryFor(presetName: string, seconds: number?): Entry
+	local pos = loopPosOf(presetName)
+	return {
+		index = pos and loop[pos].index or 0,
+		preset = presetName,
+		seconds = seconds or blockSeconds,
+	}
 end
 
 type Phase = { entry: Entry, startedAt: number, endsAt: number, nextEntry: Entry }
 
--- ── synced: same answer on every server, from the real clock ──
-local anchor = 0
-do
-	local cs = Settings.cycleStart or {}
-	anchor = (cs.hour or 0) * 3600 + (cs.minute or 0) * 60 - (cs.utcOffsetHours or 0) * 3600
-end
-
-local function syncedPhase(t: number): Phase
-	local elapsed = t - anchor
-	local round = math.floor(elapsed / total)
-	local pos = elapsed - round * total
-	local order = orderFor(round)
-	local acc = 0
-	for k, ei in order do
-		local e = entries[ei]
-		if pos < acc + e.seconds or k == #order then
-			local startedAt = anchor + round * total + acc
-			local nextEi = order[k + 1] or orderFor(round + 1)[1]
-			return { entry = e, startedAt = startedAt, endsAt = startedAt + e.seconds, nextEntry = entries[nextEi] }
-		end
-		acc += e.seconds
-	end
-	error("unreachable")
-end
-
--- ── local: this server runs its own cycle ──
-local localState: { round: number, k: number, startedAt: number, endsAt: number }? = nil
-
-local function localStart(t: number)
-	local order = orderFor(0)
-	local k = 1
-	local sw = Settings.startWith
-	if sw == "random" then
-		k = Random.new():NextInteger(1, #order)
-	elseif type(sw) == "number" then
-		for i, ei in order do
-			if entries[ei].index == sw then
-				k = i
-				break
-			end
-		end
-	elseif type(sw) == "string" then
-		for i, ei in order do
-			if string.lower(entries[ei].preset) == string.lower(sw) then
-				k = i
-				break
-			end
-		end
-	end
-	localState = { round = 0, k = k, startedAt = t, endsAt = t + entries[order[k]].seconds }
-end
-
-local function localAdvance(startAt: number)
-	local s = localState :: any
-	s.k += 1
-	if s.k > #orderFor(s.round) then
-		s.round += 1
-		s.k = 1
-	end
-	s.startedAt = startAt
-	s.endsAt = startAt + entries[orderFor(s.round)[s.k]].seconds
-end
-
-local function localPhase(t: number): Phase
-	if not localState then
-		localStart(t)
-	end
-	local s = localState :: any
-	while t >= s.endsAt do
-		localAdvance(s.endsAt)
-	end
-	local order = orderFor(s.round)
-	local nextEi = order[s.k + 1] or orderFor(s.round + 1)[1]
-	return { entry = entries[order[s.k]], startedAt = s.startedAt, endsAt = s.endsAt, nextEntry = entries[nextEi] }
-end
-
+-- What plays at Unix time t. Pure clock math, so every server gets the same.
 local function schedulePhase(t: number): Phase
-	if Settings.syncAllServers then
-		return syncedPhase(t)
+	local lt = t + offset
+	local dayStart = math.floor(lt / DAY) * DAY
+
+	-- the last fixed time at or before now (maybe yesterday's)
+	local fi = 0
+	for i = #fixed, 1, -1 do
+		if dayStart + fixed[i].at <= lt then
+			fi = i
+			break
+		end
 	end
-	return localPhase(t)
+	local anchorT
+	if fi == 0 then
+		fi = #fixed
+		anchorT = dayStart - DAY + fixed[fi].at
+	else
+		anchorT = dayStart + fixed[fi].at
+	end
+	local anchor = fixed[fi]
+	local nextFixed = fixed[fi + 1] or fixed[1]
+	local nextFixedT = fixed[fi + 1] and dayStart + nextFixed.at or dayStart + DAY + nextFixed.at
+	if fi == #fixed and anchorT < dayStart then
+		nextFixedT = dayStart + fixed[1].at
+	end
+
+	-- walk the loop from the fixed time to now
+	local pos = anchor.loopPos or 0
+	local preset = anchor.preset
+	local startedAt = anchorT
+	local endsAt = math.min(anchorT + blockSeconds, nextFixedT)
+	while lt >= endsAt do
+		pos = nextLoopPos(pos, endsAt)
+		preset = loop[pos].preset
+		startedAt = endsAt
+		endsAt = math.min(endsAt + blockSeconds, nextFixedT)
+	end
+
+	local nextPreset
+	if endsAt >= nextFixedT then
+		nextPreset = nextFixed.preset
+	else
+		nextPreset = loop[nextLoopPos(pos, endsAt)].preset
+	end
+
+	return {
+		entry = entryFor(preset, endsAt - startedAt),
+		startedAt = startedAt - offset,
+		endsAt = endsAt - offset,
+		nextEntry = entryFor(nextPreset),
+	}
 end
 
 -- ── admin override (this server only) ──
@@ -6385,16 +6433,6 @@ local function presetNames(): { string }
 	return names
 end
 
-local function entryFor(presetName: string, seconds: number?): Entry
-	for _, e in entries do
-		if e.preset == presetName then
-			return { index = e.index, preset = e.preset, seconds = seconds or e.seconds }
-		end
-	end
-	-- a preset folder that is not in the schedule
-	return { index = 0, preset = presetName, seconds = seconds or 30 * 60 }
-end
-
 local function runCommand(action: string?, arg: string?, amount: number?): string
 	local t = now()
 	action = string.lower(action or "status")
@@ -6415,12 +6453,7 @@ local function runCommand(action: string?, arg: string?, amount: number?): strin
 		return "Back to the timer · " .. runCommand("status")
 	elseif action == "next" then
 		local phase = currentPhase(t)
-		if not Settings.syncAllServers and not forced then
-			localAdvance(t)
-			publish()
-			return runCommand("status")
-		end
-		local nxt = phase.nextEntry
+		local nxt = entryFor(phase.nextEntry.preset)
 		forced = { entry = nxt, startedAt = t, endsAt = t + nxt.seconds, nextEntry = schedulePhase(t + nxt.seconds).entry }
 		publish()
 		return runCommand("status")
@@ -6431,7 +6464,7 @@ local function runCommand(action: string?, arg: string?, amount: number?): strin
 		end
 		local seconds = nil
 		if type(amount) == "number" and amount == amount and amount > 0 then
-			seconds = math.min(amount * unit, 7 * 86400)
+			seconds = math.min(amount * 60, 7 * 86400)
 		end
 		local e = entryFor(folder.Name, seconds)
 		forced = { entry = e, startedAt = t, endsAt = t + e.seconds, nextEntry = schedulePhase(t + e.seconds).entry }
@@ -6556,7 +6589,7 @@ end
 					<bool name="Disabled">false</bool>
 					<Content name="LinkedSource"><null></null></Content>
 					<token name="RunContext">1</token>
-					<string name="ScriptGuid">{1F4C4678-BD0E-42AD-A68E-B08832A64652}</string>
+					<string name="ScriptGuid">{8E90FB21-AFFD-467B-802C-0CE267C163F3}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
@@ -6566,7 +6599,7 @@ end
 					<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 				</Properties>
 			</Item>
-			<Item class="Script" referent="RBX71EC05E97EE1418EA1796B49D6A50A89">
+			<Item class="Script" referent="RBXB065DC3B63A14446860B377884342DC2">
 				<Properties>
 					<ProtectedString name="Source"><![CDATA[--!nonstrict
 --[[
@@ -6659,7 +6692,7 @@ end
 -- [2] Schedule helpers
 -- ─────────────────────────────────────────────────────────────────────────
 local function lineFor(index: number?, preset: string): { [string]: any }
-	local schedule = Settings.schedule or {}
+	local schedule = Settings.loop or {}
 	local line = index and schedule[index]
 	if type(line) == "table" and type(line.preset) == "string" and string.lower(line.preset) == string.lower(preset) then
 		return line
@@ -7477,7 +7510,7 @@ applyCurrent(transitionCfg.instantOnJoin ~= false, noticeCfg.showOnJoin == true)
 					<bool name="Disabled">false</bool>
 					<Content name="LinkedSource"><null></null></Content>
 					<token name="RunContext">2</token>
-					<string name="ScriptGuid">{C0C1FEF4-A2F1-42E7-8251-AE94A267058A}</string>
+					<string name="ScriptGuid">{0113772E-BC1D-4ECE-95BD-D94370C28AC5}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
@@ -7487,7 +7520,7 @@ applyCurrent(transitionCfg.instantOnJoin ~= false, noticeCfg.showOnJoin == true)
 					<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 				</Properties>
 			</Item>
-			<Item class="Script" referent="RBX00230AEE055D4C03B64966C12C3A50F6">
+			<Item class="Script" referent="RBX1F8A7201B0184D968C224B7096756372">
 				<Properties>
 					<ProtectedString name="Source"><![CDATA[--[==[
 ══════════════════════════════════════════════════════════════════════════════
@@ -7496,7 +7529,7 @@ Script · ReplicatedStorage > BTSettings > EnvironmentCycle · name: HowToUse
 ══════════════════════════════════════════════════════════════════════════════
 
 এটা কী করে?
-	নির্দিষ্ট সময় পর পর পুরো গেমের সব প্লেয়ারের এনভায়রনমেন্ট (আকাশ, লাইটিং,
+	আসল ঘড়ি দেখে প্রতি ২ ঘণ্টা পর পর পুরো গেমের সব প্লেয়ারের এনভায়রনমেন্ট (আকাশ, লাইটিং,
 	অ্যাটমোস্ফিয়ার, ইফেক্ট, ঘাসের রং, মেঘ) একসাথে বদলে দেয় — "All Lighting"
 	ফোল্ডারের প্রিসেট থেকে। বদলানোর সময় ধীরে ধীরে (smooth) বদলায় আর সবার
 	স্ক্রিনের উপরে ছোট একটা কার্ড আসে:  🌙 ENVIRONMENT CHANGED · Night
@@ -7510,56 +7543,73 @@ Script · ReplicatedStorage > BTSettings > EnvironmentCycle · name: HowToUse
 	ভেতর থেকেই চলে — ServerScriptService বা StarterPlayerScripts-এ কিছু রাখতে
 	হবে না।
 
-BTSettings-এর Config বা অন্য কোনো ফাইল এই সিস্টেম বদলায় না। এটা শুধু
-Config থেকে কিছু মান পড়ে (All Lighting ফোল্ডারের নাম, থিমের রং, ফন্ট,
-quality preset), কিছু লেখে না।
+BTSettings Config-এ শুধু একটা জিনিস যোগ হয়েছে:
+	Settings › Graphics ট্যাবে "Live environment" টগল (id = "env_live")।
+	বাকি সব Config থেকে এই সিস্টেম শুধু পড়ে (All Lighting ফোল্ডারের নাম,
+	থিমের রং, ফন্ট, quality preset), কিছু বদলায় না।
 
 
 ──────────────────────────────────────────────────────────────────────────────
-১) কোন প্রিসেট, কতক্ষণ — Settings.schedule
+১) কীভাবে দিন সাজানো হয় — ৩টা নিয়ম
 ──────────────────────────────────────────────────────────────────────────────
-	Settings.timeUnit = "minutes"     -- "seconds" | "minutes" | "hours"
+	সব সময় বাংলাদেশ সময়ে (Settings.utcOffsetHours = 6)। হিসাবটা শুধু আসল
+	ঘড়ি দিয়ে হয়, তাই গেমের সব সার্ভারে, এমনকি Studio-তেও, একই মুহূর্তে একই
+	এনভায়রনমেন্ট থাকে। প্রতিদিন একই সময়ে একই জিনিস।
 
-	Settings.schedule = {
-		{ preset = "Sunrise", duration = 60,  title = "Sunrise", icon = "🌅" },
-		{ preset = "Day",     duration = 120, title = "Day",     icon = "☀️" },
-		{ preset = "Sunset",  duration = 60,  title = "Sunset",  icon = "🌇" },
-		{ preset = "Night",   duration = 120, title = "Night",   icon = "🌙" },
-	}
+	ক) লুপ — এগুলো পালা করে আসে, প্রতিটা blockHours (২ ঘণ্টা) থাকে:
+		Settings.blockHours = 2
+		Settings.loop = {
+			{ preset = "Sunrise", title = "Sunrise", icon = "🌅" },
+			{ preset = "Day", ... },
+			{ preset = "AfternoonGoldenHour", ... },
+			{ preset = "Sunset", ... },
+			{ preset = "Night", ... },
+		}
 
-	• preset   = "All Lighting"-এর ভেতরের ফোল্ডারের নাম হুবহু (বড়/ছোট হাতের
-	             অক্ষর না মিললেও চলে)।
-	• duration = কতক্ষণ থাকবে (timeUnit অনুযায়ী)। উপরে: সানরাইজ ১ ঘণ্টা,
-	             দিন ২ ঘণ্টা, সানসেট ১ ঘণ্টা, রাত ২ ঘণ্টা — তারপর আবার শুরু।
-	• যেটা লাগবে না, ওই লাইন মুছে দিন বা সামনে "--" দিন। একই প্রিসেট একাধিকবার
-	  দেওয়া যায়।
-	• ঐচ্ছিক: title (কার্ডে যে নাম দেখাবে), icon (ইমোজি), color (কার্ডের রং),
-	  message (নামের নিচে ছোট লাইন), clockTime (সূর্যের অবস্থান 0-24, যেমন রাতে
-	  চাঁদের জন্য 0), transitionTime (শুধু এই প্রিসেটের ব্লেন্ড সেকেন্ড)।
-	• ভুল নাম/ডিউরেশন হলে Output-এ "[BTSettings] Environment: ..." ওয়ার্নিং
-	  আসে, ওই লাইন বাদ যায়, বাকি সব চলতে থাকে।
+	খ) নির্দিষ্ট সময় — এই সময় হলে এই প্রিসেট আসবেই, তারপর লুপ সেখান থেকে চলে:
+		Settings.fixedTimes = {
+			{ at = "06:00", preset = "Sunrise" },
+			{ at = "20:00", preset = "Night" },
+		}
+		পরের নির্দিষ্ট সময় চলে এলে চলতি প্রিসেট একটু আগেই শেষ হয়ে যায়।
 
-	টেস্ট করার সহজ উপায়: timeUnit = "seconds" আর duration = 20 দিন → Play →
-	প্রতি ২০ সেকেন্ডে বদলাবে। দেখা শেষে আবার "minutes" করে দিন।
+	গ) শুধু এই সময়ের মধ্যে — এর বাইরে লুপে পালা এলে বাদ দিয়ে পরেরটা আসে:
+		Settings.onlyBetween = {
+			Night = { from = "19:00", to = "05:00" },   -- Night শুধু রাতে
+			Sunrise = { from = "05:00", to = "09:00" }, -- Sunrise শুধু ভোরে
+		}
+
+	এই সেটিংয়ে একটা দিন (বাংলাদেশ সময়):
+		06-08 Sunrise      (সকাল ৬টার নির্দিষ্ট সময়)
+		08-10 Day
+		10-12 Afternoon
+		12-14 Sunset
+		14-16 Day          (দিনে Night আর Sunrise বাদ)
+		16-18 Afternoon
+		18-20 Sunset
+		20-22 Night        (রাত ৮টার নির্দিষ্ট সময়)
+		22-00 Day          (Night ২ ঘণ্টা থেকে চলে গেছে)
+		00-02 Afternoon
+		02-04 Sunset
+		04-06 Night        (রাত, তাই Night আসতে পারে)
+		06:00 আবার Sunrise — পরের দিন হুবহু একই
+
+	লাইনের ঐচ্ছিক জিনিস: title (কার্ডে নাম), icon (ইমোজি), color (কার্ডের রং),
+	message (নামের নিচে ছোট লাইন), clockTime (সূর্যের অবস্থান 0-24, যেমন রাতে
+	চাঁদের জন্য 0), transitionTime (শুধু এই প্রিসেটের ব্লেন্ড সেকেন্ড)।
+	preset = "All Lighting"-এর ভেতরের ফোল্ডারের নাম (বড়/ছোট হাতের অক্ষর না
+	মিললেও চলে)। ভুল নাম/সময় হলে Output-এ "[BTSettings] Environment: ..."
+	ওয়ার্নিং আসে, ওই লাইন বাদ যায়, বাকি সব চলে।
 
 
 ──────────────────────────────────────────────────────────────────────────────
-২) সব সার্ভারে একই সময়ে একই আকাশ — syncAllServers
+২) Studio-তে টেস্ট
 ──────────────────────────────────────────────────────────────────────────────
-	Settings.syncAllServers = true   (রেকমেন্ডেড)
-		আসল ঘড়ি দেখে হিসাব হয়, তাই গেমের সব সার্ভারে একই মুহূর্তে একই
-		এনভায়রনমেন্ট। প্লেয়ার সার্ভার বদলালেও একই আকাশ দেখবে।
-	Settings.cycleStart = { hour = 6, minute = 0, utcOffsetHours = 6 }
-		লিস্টের প্রথম লাইন কোন আসল সময়ে শুরু হবে (বাংলাদেশ = UTC+6)।
-		আইডিয়া: সব duration যোগ করে ২৪ ঘণ্টা বানান → গেমের দিন-রাত আসল
-		দিন-রাতের সাথে মিলবে (যেমন বাংলাদেশে সন্ধ্যা ৬টায় গেমেও সানসেট)।
-	Settings.syncAllServers = false
-		প্রতিটা সার্ভার খোলার সময় নিজের চক্র শুরু করে। কোথা থেকে শুরু:
-		Settings.startWith = 1 | "random" | "Night"
-
-	Settings.order = "loop"     উপর থেকে নিচে, বারবার
-	Settings.order = "shuffle"  প্রতি রাউন্ডে এলোমেলো (sync চালু থাকলে সব
-	                            সার্ভারে একই এলোমেলো ক্রম)
+	• Play চাপলে আপনার কম্পিউটারের ঘড়ি দেখে এখনকার এনভায়রনমেন্ট আসে।
+	  যেমন রাত ২টায় Play করলে Sunset (02-04), রাত ৯টায় Night।
+	• চ্যাটে /env লিখলে দেখাবে এখন কী আর পরে কী আসবে।
+	• দ্রুত বদলানো দেখতে: blockHours = 0.01 (প্রায় ৩৬ সেকেন্ড), দেখা শেষে
+	  আবার 2 করে দিন। অথবা /env next দিয়ে একটা একটা করে দেখুন।
 
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -7588,6 +7638,9 @@ quality preset), কিছু লেখে না।
 ──────────────────────────────────────────────────────────────────────────────
 	• Skybox ট্যাব থেকে প্লেয়ার যেকোনো সময় নিজের আকাশ বেছে নিতে পারে — সেটা
 	  পরের এনভায়রনমেন্ট বদলানো পর্যন্ত থাকে।
+	• Graphics › "Live environment" বন্ধ করলে তার ফোনে আর বদলাবে না, নোটিসও
+	  আসবে না; তখনকার আকাশই থাকে। আবার চালু করলে সাথে সাথে এখনকারটা আসে।
+	  এটা সেভ হয় না — প্রতিবার গেমে ঢুকলে চালু অবস্থায় থাকে।
 	• Quality "Low" থাকলে নতুন প্রিসেটেও post effects বন্ধ থাকে আর কুয়াশা পাতলা
 	  থাকে (Settings.player.respectQualityPreset)।
 	• "Reset lighting" চাপলে (আর নিজের আকাশ বাছা না থাকলে) লাইভ এনভায়রনমেন্টই
@@ -7603,8 +7656,8 @@ quality preset), কিছু লেখে না।
 	চ্যাটে লিখুন:
 		/env              এখন কী চলছে, পরে কী আসবে
 		/env list         সব প্রিসেটের নাম
-		/env Night        এই সার্ভারে এখনই Night (তার স্বাভাবিক সময় পর্যন্ত)
-		/env Night 30     Night থাকবে 30 (timeUnit) — তারপর আবার টাইমার
+		/env Night        এই সার্ভারে এখনই Night (blockHours পর্যন্ত)
+		/env Night 30     Night থাকবে 30 মিনিট — তারপর আবার টাইমার
 		/env Pink SKy 10  নামে স্পেস থাকলেও চলে
 		/env next         পরেরটায় চলে যাও
 		/env auto         নিজের বদলানো বাতিল, আবার টাইমার
@@ -7630,7 +7683,7 @@ quality preset), কিছু লেখে না।
 ──────────────────────────────────────────────────────────────────────────────
 	১. "All Lighting"-এ নতুন ফোল্ডার (অন্যগুলোর মতো: Sky, Atmosphere, Bloom,
 	   ColorCorrection, SunRays ... আর "Lighting Valus" ফোল্ডার)।
-	২. Settings.schedule-এ এক লাইন: { preset = "ফোল্ডারের নাম", duration = 60 }
+	২. Settings.loop-এ এক লাইন: { preset = "ফোল্ডারের নাম", title = "নাম" }
 	প্রতিটা প্রিসেট থেকে যা বসে:
 	   • Sky, Atmosphere, সব PostEffect (প্রথমটা, প্রতি ধরনের একটা করে)
 	   • "Lighting Valus"-এর যেসব নাম Lighting-এর প্রপার্টির সাথে মেলে
@@ -7654,7 +7707,7 @@ quality preset), কিছু লেখে না।
 					<bool name="Disabled">true</bool>
 					<Content name="LinkedSource"><null></null></Content>
 					<token name="RunContext">0</token>
-					<string name="ScriptGuid">{0F3AF199-6E7F-4D68-A069-E41099043CFC}</string>
+					<string name="ScriptGuid">{0B350953-E5B1-449A-A2E3-C34001A3C9D1}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>

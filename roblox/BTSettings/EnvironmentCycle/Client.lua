@@ -89,7 +89,7 @@ end
 -- [2] Schedule helpers
 -- ─────────────────────────────────────────────────────────────────────────
 local function lineFor(index: number?, preset: string): { [string]: any }
-	local schedule = Settings.schedule or {}
+	local schedule = Settings.loop or {}
 	local line = index and schedule[index]
 	if type(line) == "table" and type(line.preset) == "string" and string.lower(line.preset) == string.lower(preset) then
 		return line

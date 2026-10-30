@@ -26,61 +26,62 @@ local Settings = {}
 Settings.enabled = true
 
 -- ═══════════════════════════════════════════════════════════════════════
--- SCHEDULE — which presets play, in which order, and for how long
--- ═══════════════════════════════════════════════════════════════════════
--- Unit for every `duration` below: "seconds", "minutes" or "hours".
--- (Testing tip: set "seconds" and small numbers like 20, see it change fast.)
-Settings.timeUnit = "minutes"
-
--- One line = one environment. They play top to bottom, then start again.
---   preset         REQUIRED · exact folder name inside "All Lighting"
---   duration       REQUIRED · how long it stays (in Settings.timeUnit)
---   title          optional · name shown in the notice (default = preset name)
---   icon           optional · emoji in the notice
---   color          optional · notice accent color, e.g. Color3.fromRGB(255, 170, 60)
---   message        optional · small line under the title in the notice
---   clockTime      optional · force the sun position (0-24) for this preset,
---                  e.g. 0 = midnight moon. Without it the preset's own
---                  "Lighting Valus > ClockTime" is used.
---   transitionTime optional · blend seconds just for this preset
+-- SCHEDULE — real clock + a 2-hour loop
 --
--- Use only the presets you want. The same preset may appear more than once.
--- Your preset folders: Sunrise, MorningGoldenHour, Day, AfternoonGoldenHour,
--- Sunset, Twilight, Night, Tower Main Light, Pink SKy, Golden Sky,
--- Cloudy sky, Breakup Sky
-Settings.schedule = {
-	{ preset = "Sunrise", duration = 60, title = "Sunrise", icon = "🌅", color = Color3.fromRGB(255, 170, 90) },
-	{ preset = "Day", duration = 120, title = "Day", icon = "☀️", color = Color3.fromRGB(255, 220, 110) },
-	{ preset = "AfternoonGoldenHour", duration = 60, title = "Afternoon", icon = "🌤️", color = Color3.fromRGB(255, 196, 80) },
-	{ preset = "Sunset", duration = 60, title = "Sunset", icon = "🌇", color = Color3.fromRGB(255, 130, 70) },
-	{ preset = "Night", duration = 120, title = "Night", icon = "🌙", color = Color3.fromRGB(130, 150, 255) },
+-- How a day is built (every server computes the same, so every server of
+-- the game shows the same environment at the same moment):
+--   1. At each fixedTimes clock time, that preset starts — always.
+--   2. After it, the loop goes on: every blockHours the next preset in `loop`.
+--   3. A preset listed in onlyBetween is skipped outside its hours
+--      (so Night never shows in the daytime).
+--   4. When the next fixed time arrives, the running preset ends early.
+--
+-- With the values below, Bangladesh time:
+--   06-08 Sunrise · 08-10 Day · 10-12 Afternoon · 12-14 Sunset
+--   14-16 Day · 16-18 Afternoon · 18-20 Sunset · 20-22 Night
+--   22-00 Day · 00-02 Afternoon · 02-04 Sunset · 04-06 Night · 06 Sunrise…
+-- ═══════════════════════════════════════════════════════════════════════
 
-	-- More examples (remove the "--" to use them):
-	-- { preset = "Twilight", duration = 30, title = "Twilight", icon = "🌆", color = Color3.fromRGB(90, 130, 220) },
-	-- { preset = "Pink SKy", duration = 60, title = "Pink Sky", icon = "🌸", color = Color3.fromRGB(240, 140, 230) },
-	-- { preset = "Golden Sky", duration = 60, title = "Golden Sky", icon = "✨" },
+-- Your time zone (hours from UTC). Bangladesh = 6. All clock times below
+-- are in this time zone, wherever the Roblox server is.
+Settings.utcOffsetHours = 6
+
+-- How long each preset of the loop stays, in hours (0.5 = 30 minutes).
+-- Testing tip: 0.01 ≈ 36 seconds, so you can watch the loop change fast.
+Settings.blockHours = 2
+
+-- The presets that take turns, in this order. One line = one preset.
+--   preset          REQUIRED · exact folder name inside "All Lighting"
+--   title           optional · name shown in the notice (default = preset name)
+--   icon            optional · emoji in the notice
+--   color           optional · notice accent color
+--   message         optional · small line under the title in the notice
+--   clockTime       optional · force the sun position (0-24), e.g. 0 for Night.
+--                   Without it the preset's "Lighting Valus > ClockTime" is used.
+--   transitionTime  optional · blend seconds just for this preset
+Settings.loop = {
+	{ preset = "Sunrise", title = "Sunrise", icon = "🌅", color = Color3.fromRGB(255, 170, 90) },
+	{ preset = "Day", title = "Day", icon = "☀️", color = Color3.fromRGB(255, 220, 110) },
+	{ preset = "AfternoonGoldenHour", title = "Afternoon", icon = "🌤️", color = Color3.fromRGB(255, 196, 80) },
+	{ preset = "Sunset", title = "Sunset", icon = "🌇", color = Color3.fromRGB(255, 130, 70) },
+	{ preset = "Night", title = "Night", icon = "🌙", color = Color3.fromRGB(130, 150, 255) },
 }
 
--- "loop"    = play the list top to bottom, again and again.
--- "shuffle" = mix the order every round (every server still shows the same one
---             when syncAllServers = true).
-Settings.order = "loop"
+-- Real clock times ("HH:MM", 24-hour) when a preset ALWAYS starts.
+-- The loop continues from that preset afterwards.
+-- (No lines here = the loop restarts from its first preset at 00:00.)
+Settings.fixedTimes = {
+	{ at = "06:00", preset = "Sunrise" }, -- morning: Sunrise
+	{ at = "20:00", preset = "Night" }, -- evening: Night for sure
+}
 
--- true  = EVERY server of the game shows the same environment at the same
---         moment (based on the real clock). A player who switches servers
---         sees the same sky. Recommended.
--- false = each server starts its own cycle when it opens (see startWith).
-Settings.syncAllServers = true
-
--- syncAllServers = true only: the real clock time when the FIRST line of the
--- schedule starts. utcOffsetHours = your time zone (Bangladesh = 6).
--- Tip: make the durations add up to 24 hours and the presets follow the real
--- day — e.g. Sunrise at 6:00 in Bangladesh: hour = 6, minute = 0.
-Settings.cycleStart = { hour = 6, minute = 0, utcOffsetHours = 6 }
-
--- syncAllServers = false only: where a new server starts.
--- 1 = first line · "random" = any line · "Night" = the first line with that preset.
-Settings.startWith = 1
+-- A preset may only START inside these hours; outside them the loop skips it.
+-- "from" later than "to" means across midnight (19:00 → 05:00 = the night).
+-- Presets not listed here can come at any time.
+Settings.onlyBetween = {
+	Night = { from = "19:00", to = "05:00" }, -- Night only at night
+	Sunrise = { from = "05:00", to = "09:00" }, -- Sunrise only early morning
+}
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- TRANSITION — how the change looks
@@ -124,9 +125,14 @@ Settings.notice = {
 -- PLAYERS — personal choice
 -- ═══════════════════════════════════════════════════════════════════════
 Settings.player = {
+	-- The "Live environment" toggle in Settings › Graphics (in Config).
+	-- OFF = this player keeps their own sky; the timer no longer changes it.
+	-- ON  = they follow the server again right away. (Not saved: every
+	-- player starts with it ON.)
 	-- A player can still pick any sky in the Skybox tab at any time; it stays
-	-- until the next environment change. (This system only READS the
-	-- BTSettings Config and panel values — it never changes them.)
+	-- until the next environment change.
+	controlId = "env_live",
+	eventName = "BTSettingsEnvLive", -- = Config action name (PREFIX .. "EnvLive")
 	-- true = the "Low" quality preset still turns post effects off and thins
 	-- the fog after an environment change (uses Config.graphics.presets).
 	respectQualityPreset = true,
@@ -151,8 +157,8 @@ Settings.applyClouds = true
 -- Chat commands (only for the people below):
 --   /env                 → what is on now and what comes next
 --   /env list            → all preset names
---   /env Night           → switch THIS server to Night now (for its normal duration)
---   /env Night 30        → Night for 30 minutes (Settings.timeUnit), then back to the timer
+--   /env Night           → switch THIS server to Night now (for blockHours)
+--   /env Night 30        → Night for 30 minutes, then back to the timer
 --   /env next            → jump to the next one
 --   /env auto            → cancel your change, back to the timer
 -- A change made with a command affects only the server you are in.
