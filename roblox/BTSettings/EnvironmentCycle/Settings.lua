@@ -124,13 +124,9 @@ Settings.notice = {
 -- PLAYERS — personal choice
 -- ═══════════════════════════════════════════════════════════════════════
 Settings.player = {
-	-- The "Live environment" toggle in Settings › Graphics (added to Config).
-	-- OFF = this player keeps their own sky; the timer no longer changes it.
-	-- ON  = they follow the server again right away.
 	-- A player can still pick any sky in the Skybox tab at any time; it stays
-	-- until the next environment change.
-	controlId = "env_live",
-	eventName = "BTSettingsEnvLive", -- = Config action name (PREFIX .. "EnvLive")
+	-- until the next environment change. (This system only READS the
+	-- BTSettings Config and panel values — it never changes them.)
 	-- true = the "Low" quality preset still turns post effects off and thins
 	-- the fog after an environment change (uses Config.graphics.presets).
 	respectQualityPreset = true,

@@ -44,8 +44,6 @@
 	  StarterPlayerScripts> BTSettings > UI                (draws the panel, sends signals)
 	  StarterPlayerScripts> BTSettings > Features          (graphics, skybox, camera,
 	                                                        audio, name tags, lag tip)
-	  ReplicatedStorage   > BTSettings > EnvironmentCycle  (live sky / day-night timer
-	                                                        for everyone → its Settings)
 	══════════════════════════════════════════════════════════════════════════
 ]]
 
@@ -607,19 +605,6 @@ Config.tabs = {
 				action = { kind = "bindable", name = P .. "GraphicsPreset" },
 			},
 
-			-- Live environment (BTSettings > EnvironmentCycle). OFF = this player
-			-- keeps their own sky; the server's timer no longer changes it.
-			{ type = "section", title = "Environment" },
-			{
-				type = "toggle",
-				id = "env_live",
-				title = "Live environment",
-				desc = "Sunrise, day, sunset and night change for everyone over time. Turn off to keep your own sky.",
-				descBn = "সময়ের সাথে সবার জন্য সকাল, দিন, সন্ধ্যা, রাত বদলায়। নিজের আকাশ রাখতে বন্ধ করুন।",
-				default = true,
-				action = { kind = "bindable", name = P .. "EnvLive" },
-			},
-
 			{ type = "section", title = "Lighting" },
 			{
 				type = "toggle",
@@ -862,8 +847,6 @@ THE 5 FILES
 	StarterPlayerScripts > BTSettings > Features          ← built-in features
 	(ReplicatedStorage > BTSettings > BTSettingsRemotes is made by the Server
 	 when the game runs — never create it yourself.)
-	ReplicatedStorage    > BTSettings > EnvironmentCycle  ← live environment timer
-	                                    (edit its Settings, read its HowToUse)
 
 YOUR OWN FEATURES = Config lines + ONE small receiver script of your own.
 You never have to open UI or Features. Put your receiver scripts inside the
@@ -5914,7 +5897,7 @@ return Twilight]]></ProtectedString>
 				</Item>
 			</Item>
 		</Item>
-		<Item class="Folder" referent="RBXC2E6830B0DFC4119B7B7CBC21F09EDB9">
+		<Item class="Folder" referent="RBX2392A49D3880427FA7AD669BBE707F44">
 			<Properties>
 				<Color3 name="IconTint">
 					<R>0</R>
@@ -5929,7 +5912,7 @@ return Twilight]]></ProtectedString>
 				<int64 name="SourceAssetId">-1</int64>
 				<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 			</Properties>
-			<Item class="ModuleScript" referent="RBX4F97BEA8E79242CBBCEE2253851F96A8">
+			<Item class="ModuleScript" referent="RBX9AC46B6D88704593BBBE71DE3CD5C99F">
 				<Properties>
 					<Content name="LinkedSource"><null></null></Content>
 					<ProtectedString name="Source"><![CDATA[--!nonstrict
@@ -6058,13 +6041,9 @@ Settings.notice = {
 -- PLAYERS — personal choice
 -- ═══════════════════════════════════════════════════════════════════════
 Settings.player = {
-	-- The "Live environment" toggle in Settings › Graphics (added to Config).
-	-- OFF = this player keeps their own sky; the timer no longer changes it.
-	-- ON  = they follow the server again right away.
 	-- A player can still pick any sky in the Skybox tab at any time; it stays
-	-- until the next environment change.
-	controlId = "env_live",
-	eventName = "BTSettingsEnvLive", -- = Config action name (PREFIX .. "EnvLive")
+	-- until the next environment change. (This system only READS the
+	-- BTSettings Config and panel values — it never changes them.)
 	-- true = the "Low" quality preset still turns post effects off and thins
 	-- the fog after an environment change (uses Config.graphics.presets).
 	respectQualityPreset = true,
@@ -6106,7 +6085,7 @@ Settings.admin = {
 
 return Settings
 ]]></ProtectedString>
-					<string name="ScriptGuid">{0B3F204E-27BF-4E53-B9B9-B8263002FF65}</string>
+					<string name="ScriptGuid">{2CD6D544-9D77-43FE-9B5B-E43A56FDA417}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
@@ -6116,7 +6095,7 @@ return Settings
 					<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 				</Properties>
 			</Item>
-			<Item class="Script" referent="RBX70B9B4225C0F4510A77163828DBCD228">
+			<Item class="Script" referent="RBX37DEEC8CCDCF451080F1A073B8D9D491">
 				<Properties>
 					<ProtectedString name="Source"><![CDATA[--!nonstrict
 --[[
@@ -6577,7 +6556,7 @@ end
 					<bool name="Disabled">false</bool>
 					<Content name="LinkedSource"><null></null></Content>
 					<token name="RunContext">1</token>
-					<string name="ScriptGuid">{4188C1F2-8A01-4C4F-87F8-6B132828CF91}</string>
+					<string name="ScriptGuid">{1F4C4678-BD0E-42AD-A68E-B08832A64652}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
@@ -6587,7 +6566,7 @@ end
 					<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 				</Properties>
 			</Item>
-			<Item class="Script" referent="RBX0F1496CDEC0147F1860C295F40063479">
+			<Item class="Script" referent="RBX71EC05E97EE1418EA1796B49D6A50A89">
 				<Properties>
 					<ProtectedString name="Source"><![CDATA[--!nonstrict
 --[[
@@ -7498,7 +7477,7 @@ applyCurrent(transitionCfg.instantOnJoin ~= false, noticeCfg.showOnJoin == true)
 					<bool name="Disabled">false</bool>
 					<Content name="LinkedSource"><null></null></Content>
 					<token name="RunContext">2</token>
-					<string name="ScriptGuid">{6DA77FB8-CDA7-4F47-91E8-054684C31886}</string>
+					<string name="ScriptGuid">{C0C1FEF4-A2F1-42E7-8251-AE94A267058A}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
@@ -7508,7 +7487,7 @@ applyCurrent(transitionCfg.instantOnJoin ~= false, noticeCfg.showOnJoin == true)
 					<SharedString name="Tags">yuZpQdnvvUBOTYh1jqZ2cA==</SharedString>
 				</Properties>
 			</Item>
-			<Item class="Script" referent="RBXEE2879C22A624DD1B9A5D59F6A3C9BD9">
+			<Item class="Script" referent="RBX00230AEE055D4C03B64966C12C3A50F6">
 				<Properties>
 					<ProtectedString name="Source"><![CDATA[--[==[
 ══════════════════════════════════════════════════════════════════════════════
@@ -7531,10 +7510,9 @@ Script · ReplicatedStorage > BTSettings > EnvironmentCycle · name: HowToUse
 	ভেতর থেকেই চলে — ServerScriptService বা StarterPlayerScripts-এ কিছু রাখতে
 	হবে না।
 
-Config-এ যা বদলেছে:
-	Settings › Graphics ট্যাবে নতুন "Live environment" টগল (id = "env_live")।
-	প্লেয়ার এটা বন্ধ করলে তার নিজের আকাশ থাকবে, টাইমার আর বদলাবে না।
-	চালু করলে সাথে সাথে সার্ভারের এখনকার এনভায়রনমেন্ট ফিরে আসে।
+BTSettings-এর Config বা অন্য কোনো ফাইল এই সিস্টেম বদলায় না। এটা শুধু
+Config থেকে কিছু মান পড়ে (All Lighting ফোল্ডারের নাম, থিমের রং, ফন্ট,
+quality preset), কিছু লেখে না।
 
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -7610,7 +7588,6 @@ Config-এ যা বদলেছে:
 ──────────────────────────────────────────────────────────────────────────────
 	• Skybox ট্যাব থেকে প্লেয়ার যেকোনো সময় নিজের আকাশ বেছে নিতে পারে — সেটা
 	  পরের এনভায়রনমেন্ট বদলানো পর্যন্ত থাকে।
-	• সবসময় নিজের আকাশ রাখতে চাইলে Graphics › "Live environment" বন্ধ করবে।
 	• Quality "Low" থাকলে নতুন প্রিসেটেও post effects বন্ধ থাকে আর কুয়াশা পাতলা
 	  থাকে (Settings.player.respectQualityPreset)।
 	• "Reset lighting" চাপলে (আর নিজের আকাশ বাছা না থাকলে) লাইভ এনভায়রনমেন্টই
@@ -7677,7 +7654,7 @@ Config-এ যা বদলেছে:
 					<bool name="Disabled">true</bool>
 					<Content name="LinkedSource"><null></null></Content>
 					<token name="RunContext">0</token>
-					<string name="ScriptGuid">{3F4D2B08-D234-4793-8407-7EB889F750E5}</string>
+					<string name="ScriptGuid">{0F3AF199-6E7F-4D68-A069-E41099043CFC}</string>
 					<BinaryString name="AttributesSerialize"></BinaryString>
 					<SecurityCapabilities name="Capabilities">0</SecurityCapabilities>
 					<bool name="DefinesCapabilities">false</bool>
